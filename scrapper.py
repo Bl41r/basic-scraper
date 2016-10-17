@@ -1,12 +1,16 @@
-# http://info.kingcounty.gov/health/ehs/foodsafety/inspections/Results.aspx?Output=W&Business_Name=name_of_b&Business_Address=address_here&Longitude=&Latitude=&City=city_here&Zip_Code=98105
-#&Inspection_Type=All&Inspection_Start=&Inspection_End=&Inspection_Closed_Business=A&Violation_Points=&
-#Violation_Red_Points=&Violation_Descr=&Fuzzy_Search=N&Sort=B
+"""Basic scrapper exercise."""
 
+# http://info.kingcounty.gov/health/ehs/foodsafety/inspections/Results.aspx?Output=W&Business_Name=name_of_b&Business_Address=address_here&Longitude=&Latitude=&City=city_here&Zip_Code=98105
+# &Inspection_Type=All&Inspection_Start=&Inspection_End=&Inspection_Closed_Business=A&Violation_Points=&
+# Violation_Red_Points=&Violation_Descr=&Fuzzy_Search=N&Sort=B
+
+import json
 import requests
 import io
 from bs4 import BeautifulSoup
 import sys
 import re
+import geocoder
 
 DOMAIN = 'http://info.kingcounty.gov'
 PATH = '/health/ehs/foodsafety/inspections/Results.aspx'
@@ -59,7 +63,6 @@ def load_inspection_page(filename):
     enc = 'utf-8'
     f.close()
     return content, enc
-
 
 
 def write_results_to_file(results):
@@ -132,26 +135,66 @@ def extract_score_data(elem):
     return data
 
 
-if __name__ == '__main__':
+def get_geojson(result):
+    address = " ".join(result.get('Address', ''))
+    if not address:
+        return None
+    geocoded = geocoder.google(address)
+    geojson = geocoded.geojson
+    inspection_data = {}
+    use_keys = (
+        'Business Name', 'Average Score', 'Total Inspections', 'High Score',
+        'Address',
+    )
+    for key, val in result.items():
+        if key not in use_keys:
+            continue
+        if isinstance(val, list):
+            val = " ".join(val)
+        inspection_data[key] = val
+    new_address = geojson['properties'].get('address')
+    if new_address:
+        inspection_data['Address'] = new_address
+    geojson['properties'] = inspection_data
+    return geojson
+
+
+def generate_results(test=False, count=5):
+    """Generator that yields results."""
     kwargs = {
         'Inspection_Start': '2/1/2013',
         'Inspection_End': '2/1/2015',
         'Zip_Code': '98105'
     }
-    if len(sys.argv) > 1 and sys.argv[1] == 'test':
+
+    if test:
         print('using local file...')
         html, encoding = load_inspection_page('inspection_page.html')
     else:
         html, encoding = get_inspection_page(**kwargs)
+
     doc = parse_source(html, encoding)
     print(doc.prettify(encoding=encoding))
-    listings = extract_data_listings(doc) # add this line
-    print(len(listings))                   # and this one
-    print(listings[0].prettify())          # and this one too
+    listings = extract_data_listings(doc)   # add this line
+    print(len(listings))                    # and this one
+    print(listings[0].prettify())           # and this one too
     doc = parse_source(html, encoding)
     listings = extract_data_listings(doc)
-    for listing in listings[:5]:
+
+    for listing in listings[:count]:
         metadata = extract_restaurant_metadata(listing)
-        inspection_rows = listing.find_all(is_inspection_row)
-        for row in inspection_rows:
-            print(row.text)
+        score_data = extract_score_data(listing)
+        metadata.update(score_data)
+        yield metadata
+
+
+if __name__ == '__main__':
+    import pprint
+    test = len(sys.argv) > 1 and sys.argv[1] == 'test'
+    total_result = {'type': 'FeatureCollection', 'features': []}
+    for result in generate_results(test):
+        geo_result = get_geojson(result)
+        pprint.pprint(geo_result)
+        total_result['features'].append(geo_result)
+    with open('my_map.json', 'w') as fh:
+        json.dump(total_result, fh)
