@@ -1,1 +1,1 @@
-This is a basic web scrapper for King County restaurant data.
+This is a basic web scraper for King County restaurant data.
