@@ -1,0 +1,1 @@
+This is a basic web scrapper for King County restaurant data.
